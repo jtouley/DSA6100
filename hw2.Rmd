@@ -1,0 +1,153 @@
+---
+title: "PCA confirms that GDPCAP is better than GDPGrowth"
+author: "Jason Touleyrou"
+date: "January 22, 2018"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = FALSE)
+rm(list=ls())
+library(ggplot2)
+library(dplyr)
+library(gplots)
+library(lme4)
+library(apsrtable)
+library(FactoMineR)
+library(GGally)
+library(mctest)
+library(ppcor)
+library(factoextra)
+library(NbClust)
+library(cluster)
+library(maps)
+library(plotly)
+library(stringr)
+library(reshape2)
+library(ggthemes)
+library(leaps)
+# data available here: https://drive.google.com/file/d/1wqoU8Fi-ZyG_iiD5PdaDD1_J7VwebJLD/view
+data  = read.csv("C:/Users/jason/Downloads/Updated Master Data.csv")
+```
+
+# Some of these may not be needed - this data set was used for a seperate project last semester that makes up a combination of plm, glm, lm and clustering using k-meansdata available here: https://drive.google.com/file/d/1wqoU8Fi-ZyG_iiD5PdaDD1_J7VwebJLD/view
+
+```{r }
+str(data)
+
+```
+
+#This allows us to see the curret structure of the data and identify objects that may need to be modified prior to building our model
+
+
+```{r print, echo=FALSE}
+head(data)
+```
+
+#Using the head function gives us a snapshot of what the current values of the data look like in their dataframe.
+
+```{r cleaning}
+data[, 3:13] <- scale(data[, 3:13])
+data$geo_idx[data$geo_idx==1] <- "Brazil"
+data$geo_idx[data$geo_idx==2] <- "China"
+data$geo_idx[data$geo_idx==3] <- "France" 
+data$geo_idx[data$geo_idx==4] <- "Germany"
+data$geo_idx[data$geo_idx==5] <- "India"
+data$geo_idx[data$geo_idx==6] <- "Italy"
+data$geo_idx[data$geo_idx==7] <- "Japan"
+data$geo_idx[data$geo_idx==8] <- "Mexico"
+data$geo_idx[data$geo_idx==9] <- "Russia"
+data$geo_idx[data$geo_idx==10] <- "South Africa"
+data$geo_idx[data$geo_idx==11] <- "UK"
+data$geo_idx[data$geo_idx==12] <- "USA"
+summary(data)
+head(data$geo_idx)
+```
+
+#First, we scale the data so that all the means of the nonfactor data are 0. We will confirm this has been completed by running the summary function.
+#Second, we will change the numbers that represent the countrires to their names in characters. This is to allow for the map function we used in ggplot to match up and display the countries with their respective colors/groupings. We will confirm the result by using the head function only on the geo_idx column to confirm the data has been transformed.
+
+```{r maps}
+map <- map_data("world")
+map <- left_join(map, data, by = c('region' = 'geo_idx'))
+ggplot() + geom_polygon(data = map, aes(x = long, y = lat, group = group,fill = Category)) +
+  labs(x=NULL, y=NULL)+theme_minimal()
+```
+
+#We now have used the previously the installed maps function to extract deographic cooridnates for our 12 countries. We will then join our data with the maps data and use ggplot to graph the countries in their respective groups. For reference, this data set looked at 12 countries: 6 developed and 6 emerging. The goal was originally to see if we could predict GDP growth from a number of key indicators.
+
+```{r heatmap}
+#heatmap
+qplot(x=Var1, y=Var2, data=melt(cor(data[, 3:13], use="p")), fill=value, geom="tile") +
+  scale_fill_gradient2(limits=c(-1, 1)) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(title="Heatmap of Correlation Matrix", 
+       x=NULL, y=NULL)
+```
+
+#Before we get into to PCA, we want to check for correlation in our data using a heatmap. The darker blue squares show us the areas that are most corrleated, while the lighter areas indicate little to no corrleation. We discover here that our hypothesis is already on thin ice, but we carry on.
+
+```{r PCA data prep}
+data.pca <- PCA(data[, 3:13], graph=FALSE)
+print(data.pca)
+eigenvalues = data.pca$eig
+data.pca$var$coord
+head(eigenvalues)
+```
+
+#Above we use the PCa function to extract the eignvalues.Eigenvalues correspond to the amount of the variation explained by each principal component (PC).
+
+```{r}
+fviz_screeplot(data.pca, addlabels = TRUE, ylim = c(0, 65))
+head(data.pca$var$contrib)
+```
+
+#The above Scree plots allow us to see the dimensions of variance as displays by the eigenvalues. Nearly 80% of the variances contained in the data are retained by the first three principal components. 
+
+```{r}
+#circle of correlations
+fviz_pca_var(data.pca, col.var="contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)
+```
+
+#The graph above shows which variables the PCs are most closely correlated with. 
+
+```{r}
+#prcomp()
+data.pca1 = prcomp(data[, 3:13], scale. = TRUE)
+print(data.pca1)
+head(data.pca1$rotation)
+# create data frame with scores
+scores = as.data.frame(data.pca1$x)
+```
+
+#Another popoular method or function used for PCA is the prcomp() function. #The prcomp function returns an object of class prcomp, which have some methods available. The print method returns the standard deviation of each of the four PCs, and their rotation (or loadings), which are the coefficients of the linear combinations of the continuous variables.
+
+```{r}
+ggplot(data = scores, aes(x = PC1, y = PC2, label = rownames(scores))) +
+  geom_hline(yintercept = 0, colour = "gray65") +
+  geom_vline(xintercept = 0, colour = "gray65") +
+  geom_text(colour = "tomato", alpha = 0.8, size = 4) +
+  ggtitle("PCA plot of GDP Growth Factors")
+```
+
+#Looks like there are three clusters there, but let's see. We will use the Hubert index to identify the best number of clusters for our data.
+
+```{r}
+number <- NbClust(data[, 3:13], distance="euclidean",
+                  min.nc=2, max.nc=10, method='ward.D', index='all', alphaBeale = 0.1)
+```
+
+#Based on these results, it confirms that three is the ideal number of clusters. Next we will use the kmeans method for our clustering.
+
+```{r}
+set.seed(2017)
+GDPCluster <- kmeans(data[, 3:13], 3, nstart = 15)
+GDPCluster
+table(GDPCluster$cluster, data$Category)
+GDPCluster$cluster <- as.factor(GDPCluster$cluster)
+ggplot(data, aes(geo_idx, GDPGROWTH, color = GDPCluster$cluster)) + geom_point()
+```
+
+#Interestingly the cluster accurately predicts the emrging nations. With the developed nations it splits the US and Japan into a league of their own. The European nations all fall into their own cluster.
